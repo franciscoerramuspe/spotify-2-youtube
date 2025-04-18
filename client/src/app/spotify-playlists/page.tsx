@@ -1,3 +1,5 @@
+// src/app/spotify-playlists/page.tsx
+
 "use client"
 
 import { useState, useEffect } from "react"

@@ -1,7 +1,50 @@
-import Image from "next/image"
-import { ArrowRight } from "lucide-react"
+// src/app/page.tsx
 
+"use client";
+
+import { ArrowRight, Check } from "lucide-react"
+import { useSession } from "next-auth/react";
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 export default function Home() {
+  const { data: session, status } = useSession();
+  const [isSpotifyConnected, setIsSpotifyConnected] = useState(false);
+  const [isYouTubeConnected, setIsYouTubeConnected] = useState(false);
+  const router = useRouter();
+
+  // Add debug logging
+  useEffect(() => {
+    console.log('Session Data:', {
+      status,
+      spotifyToken: session?.spotifyAccessToken ? 'Present' : 'Missing',
+      googleToken: session?.googleAccessToken ? 'Present' : 'Missing',
+      session
+    });
+  }, [session, status]);
+
+  useEffect(() => {
+    // Load initial states from localStorage
+    const storedSpotify = localStorage.getItem('spotifyConnected') === 'true';
+    const storedYoutube = localStorage.getItem('youtubeConnected') === 'true';
+    
+    setIsSpotifyConnected(storedSpotify);
+    setIsYouTubeConnected(storedYoutube);
+  }, []); // Run once on mount
+
+  useEffect(() => {
+    if (session?.spotifyAccessToken) {
+      setIsSpotifyConnected(true);
+      localStorage.setItem('spotifyConnected', 'true');
+    }
+    
+    if (session?.googleAccessToken) {
+      setIsYouTubeConnected(true);
+      localStorage.setItem('youtubeConnected', 'true');
+    }
+  }, [session?.spotifyAccessToken, session?.googleAccessToken]);
+
+  const isLoading = status === 'loading';
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-black via-gray-900 to-black text-white overflow-hidden relative">
       {/* Background elements */}
@@ -18,24 +61,16 @@ export default function Home() {
         {/* Logo and Title */}
         <div className="mb-12 text-center">
           <div className="flex items-center justify-center mb-6">
-            <div className="relative w-14 h-14 mr-4">
-              <img
-                src="/spotify.png"
-                alt="Spotify Logo"
-                width={56}
-                height={56}
-                className="object-contain"
-              />
+            {/* Spotify Logo */}
+            <div className="flex items-center justify-center w-20 h-20 mr-4">
+              <img src="/spotify0.png" alt="Spotify Logo" className="w-16 h-16 object-contain" />
             </div>
+
             <ArrowRight className="mx-3 text-gray-400" size={28} />
-            <div className="relative w-14 h-14 ml-4">
-              <Image
-                src="/yt.png"
-                alt="YouTube Logo"
-                width={56}
-                height={56}
-                className="object-contain"
-              />
+
+            {/* YouTube Logo - Made bigger */}
+            <div className="flex items-center justify-center w-20 h-20 ml-4">
+              <img src="/yt-white.png" alt="YouTube Logo" className="w-32 h-16 object-contain" />
             </div>
           </div>
           <h1 className="text-5xl md:text-6xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-green-400 via-white to-red-500 tracking-tight">
@@ -49,56 +84,80 @@ export default function Home() {
         {/* Connection Cards */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-8 w-full max-w-3xl">
           {/* Spotify Card */}
-          <div className="bg-gradient-to-br from-green-900/40 to-green-900/10 backdrop-blur-sm p-6 rounded-2xl border border-green-500/20 group hover:border-green-500/50 transition-all duration-300">
+          <div className="bg-gradient-to-br from-green-900/40 to-green-900/10 backdrop-blur-sm p-6 rounded-2xl border border-green-500/20 group hover:border-green-500/50 transition-all duration-300 min-h-[210px] flex flex-col">
             <div className="flex items-center mb-4">
-              <div className="relative w-12 h-12 mr-4">
-                <Image
-                  src="/spotify.png"
-                  alt="Spotify"
-                  width={48}
-                  height={48}
-                  className="object-contain"
-                />
+              {/* Spotify Card Logo */}
+              <div className="flex items-center justify-center w-12 h-12 mr-4">
+                <img src="/spotify0.png" alt="Spotify" className="w-10 h-10 object-contain" />
               </div>
               <h2 className="text-2xl font-semibold text-green-400">Spotify</h2>
             </div>
-            <p className="text-gray-300 mb-6">
+            <p className="text-gray-300 mb-6 flex-grow">
               Connect your Spotify account to access your playlists and favorite tracks.
             </p>
-            <a
-              href="/api/auth/signin?provider=spotify"
-              className="inline-flex items-center justify-center w-full bg-green-600 hover:bg-green-500 text-white py-3 px-6 rounded-xl font-medium transition-colors duration-300 group-hover:shadow-lg group-hover:shadow-green-500/20"
-            >
-              Connect Spotify
-              <ArrowRight className="ml-2 h-5 w-5" />
-            </a>
+            {isLoading ? (
+              <div className="h-[48px] bg-gray-700/50 rounded-xl animate-pulse"></div>
+            ) : isSpotifyConnected ? (
+              <div className="inline-flex items-center justify-center w-full bg-green-600/80 text-white py-3 px-6 rounded-xl font-medium cursor-default">
+                <Check className="mr-2 h-5 w-5" /> Connected
+              </div>
+            ) : (
+              <a
+                href="/api/auth/signin?provider=spotify"
+                className="inline-flex items-center justify-center w-full bg-green-600 hover:bg-green-500 text-white py-3 px-6 rounded-xl font-medium transition-colors duration-300 group-hover:shadow-lg group-hover:shadow-green-500/20"
+              >
+                Connect Spotify
+                <ArrowRight className="ml-2 h-5 w-5" />
+              </a>
+            )}
           </div>
 
           {/* YouTube Card */}
-          <div className="bg-gradient-to-br from-red-900/40 to-red-900/10 backdrop-blur-sm p-6 rounded-2xl border border-red-500/20 group hover:border-red-500/50 transition-all duration-300">
+          <div className="bg-gradient-to-br from-red-900/40 to-red-900/10 backdrop-blur-sm p-6 rounded-2xl border border-red-500/20 group hover:border-red-500/50 transition-all duration-300 min-h-[210px] flex flex-col">
             <div className="flex items-center mb-4">
-              <div className="relative w-12 h-12 mr-4">
-                <Image
-                  src="/yt.png"
-                  alt="YouTube"
-                  width={48}
-                  height={48}
-                  className="object-contain"
-                />
+              {/* YouTube Card Logo - Made bigger */}
+              <div className="flex items-center justify-center w-12 h-12 mr-4">
+                <img src="/yt-white.png" alt="YouTube" className="w-24 h-12 object-contain" />
               </div>
               <h2 className="text-2xl font-semibold text-red-400">YouTube</h2>
             </div>
-            <p className="text-gray-300 mb-6">
+            <p className="text-gray-300 mb-6 flex-grow">
               Connect your YouTube account to create and manage your video playlists.
             </p>
-            <a
-              href="/api/auth/signin?provider=google"
-              className="inline-flex items-center justify-center w-full bg-red-600 hover:bg-red-500 text-white py-3 px-6 rounded-xl font-medium transition-colors duration-300 group-hover:shadow-lg group-hover:shadow-red-500/20"
-            >
-              Connect YouTube
-              <ArrowRight className="ml-2 h-5 w-5" />
-            </a>
+             {isLoading ? (
+              <div className="h-[48px] bg-gray-700/50 rounded-xl animate-pulse"></div>
+            ) : isYouTubeConnected ? (
+               <div className="inline-flex items-center justify-center w-full bg-red-600/80 text-white py-3 px-6 rounded-xl font-medium cursor-default">
+                 <Check className="mr-2 h-5 w-5" /> Connected
+               </div>
+            ) : (
+              <a
+                href="/api/auth/signin?provider=google"
+                className="inline-flex items-center justify-center w-full bg-red-600 hover:bg-red-500 text-white py-3 px-6 rounded-xl font-medium transition-colors duration-300 group-hover:shadow-lg group-hover:shadow-red-500/20"
+              >
+                Connect YouTube
+                <ArrowRight className="ml-2 h-5 w-5" />
+              </a>
+            )}
           </div>
+        </div>
+
+        {/* Next Button */}
+        <div className="mt-12 w-full max-w-3xl">
+           <button
+            disabled={!isSpotifyConnected || !isYouTubeConnected || isLoading}
+            onClick={() => { 
+              router.push('/select-playlists');
+             }}
+            className={`w-full py-3 px-6 rounded-xl font-medium transition-all duration-300 text-lg flex items-center justify-center
+              ${(!isSpotifyConnected || !isYouTubeConnected || isLoading)
+                ? 'bg-gray-700 text-gray-400 cursor-not-allowed'
+                : 'bg-blue-600 hover:bg-blue-500 text-white shadow-lg hover:shadow-blue-500/30'
+              }`}
+          >
+            Next: Select Playlists
+            <ArrowRight className="ml-2 h-5 w-5" />
+          </button>
         </div>
 
         {/* Features */}

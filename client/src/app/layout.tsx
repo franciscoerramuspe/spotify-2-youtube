@@ -1,3 +1,5 @@
+// src/app/layout.tsx
+
 "use client"; // SessionProvider needs to be in a client component
 
 import type { Metadata } from "next";

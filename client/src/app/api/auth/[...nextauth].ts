@@ -1,3 +1,5 @@
+// src/app/api/auth/[...nextauth].ts
+
 import NextAuth, { type NextAuthOptions, DefaultSession } from "next-auth";
 import SpotifyProvider from "next-auth/providers/spotify";
 import GoogleProvider from "next-auth/providers/google";
