@@ -1,48 +1,47 @@
 "use client"
 
 import { Check } from "lucide-react"
-import { useSession } from "next-auth/react"
-import { useEffect, useState } from "react"
-import { useRouter } from "next/navigation"
+import { useSession, signIn, signOut } from "next-auth/react"
+import { useEffect, useRef } from "react"
+import { useRouter, useSearchParams } from "next/navigation"
 
 export default function Home() {
-  const { data: session, status } = useSession()
-  const [isSpotifyConnected, setIsSpotifyConnected] = useState(false)
-  const [isYouTubeConnected, setIsYouTubeConnected] = useState(false)
+  const { data: session, status, update: updateSession } = useSession()
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const sessionUpdateAttempted = useRef(false)
 
-  // Add debug logging
+  // More direct state, derived from session for clarity in rendering
+  const spotifyDirectlyConnected = status === "authenticated" && !!session?.spotifyAccessToken;
+  const googleDirectlyConnected = status === "authenticated" && !!session?.googleAccessToken;
+
+  // More robust session update logic
   useEffect(() => {
-    console.log("Session Data:", {
-      status,
-      spotifyToken: session?.spotifyAccessToken ? "Present" : "Missing",
-      googleToken: session?.googleAccessToken ? "Present" : "Missing",
-      session,
-    })
-  }, [session, status])
+    const hasOauthParams = searchParams.has("code") || searchParams.has("state") || searchParams.has("oauth_token");
 
-  useEffect(() => {
-    // Load initial states from localStorage
-    const storedSpotify = localStorage.getItem("spotifyConnected") === "true"
-    const storedYoutube = localStorage.getItem("youtubeConnected") === "true"
-
-    setIsSpotifyConnected(storedSpotify)
-    setIsYouTubeConnected(storedYoutube)
-  }, []) // Run once on mount
-
-  useEffect(() => {
-    if (session?.spotifyAccessToken) {
-      setIsSpotifyConnected(true)
-      localStorage.setItem("spotifyConnected", "true")
+    // Try to update if:
+    // 1. Authenticated and it's the first time this effect runs with "authenticated" (initial load after login)
+    // 2. Or, if OAuth redirect parameters are present in the URL (just came back from provider)
+    if (status === "authenticated" && (!sessionUpdateAttempted.current || hasOauthParams)) {
+      updateSession(); // Force a session refetch
+      sessionUpdateAttempted.current = true; // Mark that we've attempted an update for this auth state
+    } else if (status === "unauthenticated") {
+      sessionUpdateAttempted.current = false; // Reset if user logs out
     }
+  }, [status, searchParams, updateSession]); // Rerun if status or URL params change
 
-    if (session?.googleAccessToken) {
-      setIsYouTubeConnected(true)
-      localStorage.setItem("youtubeConnected", "true")
+  // Effect to update localStorage based on the session
+  useEffect(() => {
+    if (status === "authenticated") {
+      localStorage.setItem("spotifyConnected", !!session?.spotifyAccessToken ? "true" : "false");
+      localStorage.setItem("youtubeConnected", !!session?.googleAccessToken ? "true" : "false");
+    } else if (status === "unauthenticated") {
+      localStorage.setItem("spotifyConnected", "false");
+      localStorage.setItem("youtubeConnected", "false");
     }
-  }, [session?.spotifyAccessToken, session?.googleAccessToken])
+  }, [session, status]);
 
-  const isLoading = status === "loading"
+  const isLoading = status === "loading";
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-black via-gray-900 to-black text-white overflow-hidden relative">
@@ -114,7 +113,7 @@ export default function Home() {
             </p>
             {isLoading ? (
               <div className="h-[40px] sm:h-[48px] bg-gray-700/50 rounded-lg sm:rounded-xl animate-pulse"></div>
-            ) : isSpotifyConnected ? (
+            ) : spotifyDirectlyConnected ? (
               <div className="inline-flex items-center justify-center w-full bg-green-600/80 text-white py-2 sm:py-3 px-4 sm:px-6 rounded-lg sm:rounded-xl font-medium cursor-default text-sm sm:text-base">
                 <Check className="mr-2 h-4 sm:h-5 w-4 sm:w-5" /> Connected
               </div>
@@ -124,7 +123,6 @@ export default function Home() {
                 className="inline-flex items-center justify-center w-full bg-green-600 hover:bg-green-500 text-white py-2 sm:py-3 px-4 sm:px-6 rounded-lg sm:rounded-xl font-medium transition-colors duration-300 group-hover:shadow-lg group-hover:shadow-green-500/20 text-sm sm:text-base"
               >
                 Connect Spotify
-                <LongerArrow className="ml-2 h-4 sm:h-5 w-8 sm:w-10" />
               </a>
             )}
           </div>
@@ -141,19 +139,18 @@ export default function Home() {
             <p className="text-gray-300 mb-4 sm:mb-6 flex-grow text-sm sm:text-base">
               Connect your YouTube account to create and manage your video playlists.
             </p>
-            {isLoading ? (
+             {isLoading ? (
               <div className="h-[40px] sm:h-[48px] bg-gray-700/50 rounded-lg sm:rounded-xl animate-pulse"></div>
-            ) : isYouTubeConnected ? (
+            ) : googleDirectlyConnected ? (
               <div className="inline-flex items-center justify-center w-full bg-red-600/80 text-white py-2 sm:py-3 px-4 sm:px-6 rounded-lg sm:rounded-xl font-medium cursor-default text-sm sm:text-base">
                 <Check className="mr-2 h-4 sm:h-5 w-4 sm:w-5" /> Connected
-              </div>
+               </div>
             ) : (
               <a
                 href="/api/auth/signin?provider=google"
                 className="inline-flex items-center justify-center w-full bg-red-600 hover:bg-red-500 text-white py-2 sm:py-3 px-4 sm:px-6 rounded-lg sm:rounded-xl font-medium transition-colors duration-300 group-hover:shadow-lg group-hover:shadow-red-500/20 text-sm sm:text-base"
               >
                 Connect YouTube
-                <LongerArrow className="ml-2 h-4 sm:h-5 w-8 sm:w-10" />
               </a>
             )}
           </div>
@@ -161,20 +158,19 @@ export default function Home() {
 
         {/* Next Button - Responsive sizing */}
         <div className="mt-8 sm:mt-12 w-full max-w-3xl px-2">
-          <button
-            disabled={!isSpotifyConnected || !isYouTubeConnected || isLoading}
-            onClick={() => {
+           <button
+            disabled={!spotifyDirectlyConnected || !googleDirectlyConnected || isLoading}
+            onClick={() => { 
               router.push("/select-playlists")
-            }}
+             }}
             className={`w-full py-2 sm:py-3 px-4 sm:px-6 rounded-lg sm:rounded-xl font-medium transition-all duration-300 text-base sm:text-lg flex items-center justify-center
               ${
-                !isSpotifyConnected || !isYouTubeConnected || isLoading
+                (!spotifyDirectlyConnected || !googleDirectlyConnected || isLoading)
                   ? "bg-gray-700 text-gray-400 cursor-not-allowed"
                   : "bg-blue-600 hover:bg-blue-500 text-white shadow-lg hover:shadow-blue-500/30"
               }`}
           >
             Next: Select Playlists
-            <LongerArrow className="ml-2 h-4 sm:h-5 w-8 sm:w-10" />
           </button>
         </div>
 

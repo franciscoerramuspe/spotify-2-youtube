@@ -12,14 +12,22 @@ declare module "next-auth/jwt" {
     spotifyTokenExpires?: number;
     googleAccessToken?: string;
     googleTokenExpires?: number;
+    spotifyRefreshToken?: string;
+    spotifyExpiresAt?: number;
+    googleRefreshToken?: string;
+    googleExpiresAt?: number;
+    error?: string;
   }
 }
 
 declare module "next-auth" {
   interface Session extends DefaultSession {
+    userId?: string;
     spotifyAccessToken?: string;
     googleAccessToken?: string;
+    error?: string;
     user: {
+      id: string;
       /** True if a Spotify token is present */
       spotifyToken: boolean;
       /** True if a Google/YouTube token is present */
@@ -62,118 +70,140 @@ export const authOptions: NextAuthOptions = {
   },
 
   callbacks: {
-    async jwt({ token, account, user }) {
-      const now = Date.now();
-      let tokenToReturn: JWT = { ...token };
-
-      // On initial sign in or when linking a new account
+    async jwt({ token, user, account }) {
+      // 1. Handle new sign-in or account linking
       if (account && user) {
-        console.log(`[NextAuth JWT Callback] Account received for provider: ${account.provider} for user ID: ${user.id}`);
-
-        // Update token with the new account's details
-        if (account.provider === "spotify") {
-          tokenToReturn.spotifyAccessToken = account.access_token;
-          tokenToReturn.spotifyTokenExpires = account.expires_at ? account.expires_at * 1000 : undefined;
-          console.log(`[NextAuth JWT Callback] Spotify token added/updated. Expires at: ${tokenToReturn.spotifyTokenExpires ? new Date(tokenToReturn.spotifyTokenExpires).toISOString() : 'N/A'}`);
-        } else if (account.provider === "google") {
-          tokenToReturn.googleAccessToken = account.access_token;
-          tokenToReturn.googleTokenExpires = account.expires_at ? account.expires_at * 1000 : undefined;
-          console.log(`[NextAuth JWT Callback] Google token added/updated. Expires at: ${tokenToReturn.googleTokenExpires ? new Date(tokenToReturn.googleTokenExpires).toISOString() : 'N/A'}`);
+        // When linking a new account, we need to load existing tokens from the database
+        // because PrismaAdapter doesn't preserve them in the JWT token
+        let existingAccounts: Array<{
+          provider: string;
+          access_token: string | null;
+          refresh_token: string | null;
+          expires_at: number | null;
+        }> = [];
+        try {
+          existingAccounts = await prisma.account.findMany({
+            where: { userId: user.id },
+            select: { provider: true, access_token: true, refresh_token: true, expires_at: true }
+          });
+        } catch (error) {
+          console.error("[JWT Account] Error loading existing accounts:", error);
         }
 
-        // --- Crucial Step: Load ALL linked accounts to ensure other tokens are present ---
-        // The Prisma Adapter links accounts, so we query them via the user ID.
-        console.log(`[NextAuth JWT Callback] Fetching all linked accounts for user ID: ${user.id}`);
-        const linkedAccounts = await prisma.account.findMany({
-          where: { userId: user.id },
-        });
+        // Start with the base token and add tokens from all linked accounts
+        let newToken = { ...token }; 
+        newToken.userId = user.id; 
 
-        console.log(`[NextAuth JWT Callback] Found ${linkedAccounts.length} linked accounts.`);
+        // Add the new account's tokens
+        if (account.provider === "spotify") {
+          newToken.spotifyAccessToken = account.access_token;
+          newToken.spotifyRefreshToken = account.refresh_token;
+          newToken.spotifyExpiresAt = account.expires_at;
+        } else if (account.provider === "google") {
+          newToken.googleAccessToken = account.access_token;
+          newToken.googleRefreshToken = account.refresh_token;
+          newToken.googleExpiresAt = account.expires_at;
+        }
 
-        for (const linkedAccount of linkedAccounts) {
-          // If we don't already have a valid token for this provider from the current sign-in, add it from the DB
-          if (linkedAccount.provider === "spotify" && !tokenToReturn.spotifyAccessToken && linkedAccount.access_token) {
-            if (!linkedAccount.expires_at || linkedAccount.expires_at * 1000 > now) {
-              tokenToReturn.spotifyAccessToken = linkedAccount.access_token;
-              tokenToReturn.spotifyTokenExpires = linkedAccount.expires_at ? linkedAccount.expires_at * 1000 : undefined;
-              console.log('[NextAuth JWT Callback] Added existing valid Spotify token from DB.');
-            } else {
-               console.log('[NextAuth JWT Callback] Found expired Spotify token in DB, skipping.');
-            }
-          } else if (linkedAccount.provider === "google" && !tokenToReturn.googleAccessToken && linkedAccount.access_token) {
-             if (!linkedAccount.expires_at || linkedAccount.expires_at * 1000 > now) {
-               tokenToReturn.googleAccessToken = linkedAccount.access_token;
-               tokenToReturn.googleTokenExpires = linkedAccount.expires_at ? linkedAccount.expires_at * 1000 : undefined;
-               console.log('[NextAuth JWT Callback] Added existing valid Google token from DB.');
-            } else {
-               console.log('[NextAuth JWT Callback] Found expired Google token in DB, skipping.');
-            }
+        // Add tokens from existing linked accounts (to preserve other providers)
+        for (const existingAccount of existingAccounts) {
+          if (existingAccount.provider === "spotify" && existingAccount.provider !== account.provider) {
+            newToken.spotifyAccessToken = existingAccount.access_token || undefined;
+            newToken.spotifyRefreshToken = existingAccount.refresh_token || undefined;
+            newToken.spotifyExpiresAt = existingAccount.expires_at || undefined;
+          } else if (existingAccount.provider === "google" && existingAccount.provider !== account.provider) {
+            newToken.googleAccessToken = existingAccount.access_token || undefined;
+            newToken.googleRefreshToken = existingAccount.refresh_token || undefined;
+            newToken.googleExpiresAt = existingAccount.expires_at || undefined;
           }
         }
-         // Add user id to token
-         tokenToReturn.sub = user.id;
 
-      } else if (token.sub) {
-         // On subsequent requests (not sign-in), refresh tokens if they are expired.
-         // Note: Refresh logic is not implemented here yet, but this structure allows for it.
-         // You might need to check expiry and use refresh_token if available.
-         console.log('[NextAuth JWT Callback] Non-signin request, checking token validity.');
-         if (tokenToReturn.spotifyTokenExpires && tokenToReturn.spotifyTokenExpires < now) {
-             console.log('[NextAuth JWT Callback] Spotify token expired.');
-             // TODO: Add refresh logic if needed
-             tokenToReturn.spotifyAccessToken = undefined;
-             tokenToReturn.spotifyTokenExpires = undefined;
-         }
-         if (tokenToReturn.googleTokenExpires && tokenToReturn.googleTokenExpires < now) {
-             console.log('[NextAuth JWT Callback] Google token expired.');
-             // TODO: Add refresh logic if needed
-             tokenToReturn.googleAccessToken = undefined;
-             tokenToReturn.googleTokenExpires = undefined;
-         }
+        newToken.error = undefined; // Clear previous errors
+        return newToken;
       }
 
+      // If it's not a new account action, it's a subsequent request. Check for expiry.
+      const nowInSeconds = Date.now() / 1000;
 
-      // Log the final state being returned
-      console.log('[NextAuth JWT Callback] Final token state being returned:', {
-        userId: tokenToReturn.sub,
-        hasSpotifyToken: !!tokenToReturn.spotifyAccessToken,
-        hasGoogleToken: !!tokenToReturn.googleAccessToken,
-        spotifyExpires: tokenToReturn.spotifyTokenExpires ? new Date(tokenToReturn.spotifyTokenExpires).toISOString() : 'N/A',
-        googleExpires: tokenToReturn.googleTokenExpires ? new Date(tokenToReturn.googleTokenExpires).toISOString() : 'N/A'
-      });
+      // Spotify Refresh Check
+      if (token.spotifyAccessToken && token.spotifyExpiresAt && nowInSeconds >= token.spotifyExpiresAt - 60) {
+        if (token.spotifyRefreshToken) {
+          const refreshedToken = await refreshSpotifyAccessToken(token);
+          return refreshedToken;
+        } else {
+          token.spotifyAccessToken = undefined;
+          token.spotifyExpiresAt = undefined;
+          token.error = "SpotifyNoRefreshTokenError";
+        }
+      }
 
-      return tokenToReturn;
+      // Google Refresh Check (Placeholder)
+      // ...
+      
+      return token;
     },
 
     async session({ session, token }) {
-      // Expose the tokens and user ID in the session object
-      // Ensure the session object matches the structure defined in the declaration
+      session.userId = String(token.userId || '');
+      session.error = token.error;
+
       session.spotifyAccessToken = token.spotifyAccessToken;
       session.googleAccessToken = token.googleAccessToken;
-      // Ensure user object exists before assigning properties
-      if (session.user) {
-          session.user.spotifyToken = !!token.spotifyAccessToken;
-          session.user.googleToken = !!token.googleAccessToken;
-          // The user ID should already be part of session.user if the adapter works correctly
-      } else {
-         // Handle case where session.user might be undefined, though unlikely with adapter
-         console.error("[NextAuth Session Callback] session.user is undefined. Reconstructing minimal user object.");
-         // Reconstruct based on the declared Session['user'] type extension
-         session.user = {
-             // id: token.sub || '', // Removed: ID should come from adapter/default session
-             name: undefined,
-             email: undefined,
-             image: undefined,
-             spotifyToken: !!token.spotifyAccessToken,
-             googleToken: !!token.googleAccessToken,
-         };
-      }
-      return session;
-    },
-  },
 
+      if (!session.user) session.user = { id: '', name: null, email: null, image: null, spotifyToken: false, googleToken: false };
+      session.user.id = String(token.userId || ''); 
+      session.user.spotifyToken = !!token.spotifyAccessToken;
+      session.user.googleToken = !!token.googleAccessToken;
+
+      return session;
+    }
+  },
   secret: process.env.NEXTAUTH_SECRET,
+  // adapter: PrismaAdapter(prisma), // Temporarily commented out for testing if adapter is interfering
+  // debug: true, // Enable for more verbose logs from NextAuth itself
 };
 
 const handler = NextAuth(authOptions);
 export { handler as GET, handler as POST };
+
+// Helper function for Spotify token refresh
+async function refreshSpotifyAccessToken(token: JWT): Promise<JWT> {
+  try {
+    const url = "https://accounts.spotify.com/api/token";
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Authorization: `Basic ${Buffer.from(
+          `${process.env.SPOTIFY_CLIENT_ID}:${process.env.SPOTIFY_CLIENT_SECRET}`
+        ).toString("base64")}`,
+      },
+      body: new URLSearchParams({
+        grant_type: "refresh_token",
+        refresh_token: token.spotifyRefreshToken!,
+      }),
+    });
+
+    const refreshedTokens = await response.json();
+
+    if (!response.ok) {
+      throw new Error(`Failed to refresh Spotify token: ${refreshedTokens.error_description || 'Unknown error'}`);
+    }
+
+    return {
+      ...token,
+      spotifyAccessToken: refreshedTokens.access_token,
+      spotifyExpiresAt: Math.floor(Date.now() / 1000 + refreshedTokens.expires_in),
+      spotifyRefreshToken: refreshedTokens.refresh_token ?? token.spotifyRefreshToken,
+      error: undefined,
+    };
+  } catch (error) {
+    console.error("[Spotify Refresh] Error:", error);
+    return {
+      ...token,
+      spotifyAccessToken: undefined,
+      spotifyExpiresAt: undefined,
+      error: "SpotifyRefreshAccessTokenError",
+    };
+  }
+}
