@@ -1,46 +1,15 @@
-import NextAuth, { type NextAuthOptions, DefaultSession, Account as NextAuthAccount } from "next-auth";
+import NextAuth, { type NextAuthOptions } from "next-auth";
 import { PrismaAdapter } from "@next-auth/prisma-adapter";
 import { PrismaClient } from "@prisma/client";
 import SpotifyProvider from "next-auth/providers/spotify";
 import GoogleProvider from "next-auth/providers/google";
 import { JWT } from "next-auth/jwt";
 
-// Extend JWT and Session types
-declare module "next-auth/jwt" {
-  interface JWT {
-    spotifyAccessToken?: string;
-    spotifyTokenExpires?: number;
-    googleAccessToken?: string;
-    googleTokenExpires?: number;
-    spotifyRefreshToken?: string;
-    spotifyExpiresAt?: number;
-    googleRefreshToken?: string;
-    googleExpiresAt?: number;
-    error?: string;
-  }
-}
-
-declare module "next-auth" {
-  interface Session extends DefaultSession {
-    userId?: string;
-    spotifyAccessToken?: string;
-    googleAccessToken?: string;
-    error?: string;
-    user: {
-      id: string;
-      /** True if a Spotify token is present */
-      spotifyToken: boolean;
-      /** True if a Google/YouTube token is present */
-      googleToken: boolean;
-    } & DefaultSession["user"];
-  }
-}
 
 // Initialize Prisma Client
 const prisma = new PrismaClient();
 
 export const authOptions: NextAuthOptions = {
-  // Persist users & link multiple OAuth accounts via Prisma
   adapter: PrismaAdapter(prisma),
 
   providers: [
@@ -91,8 +60,11 @@ export const authOptions: NextAuthOptions = {
         }
 
         // Start with the base token and add tokens from all linked accounts
-        let newToken = { ...token }; 
-        newToken.userId = user.id; 
+        const newToken = { 
+          ...token,
+          userId: user.id,
+          error: undefined, // Clear previous errors
+        }; 
 
         // Add the new account's tokens
         if (account.provider === "spotify") {
@@ -118,7 +90,6 @@ export const authOptions: NextAuthOptions = {
           }
         }
 
-        newToken.error = undefined; // Clear previous errors
         return newToken;
       }
 
@@ -137,8 +108,17 @@ export const authOptions: NextAuthOptions = {
         }
       }
 
-      // Google Refresh Check (Placeholder)
-      // ...
+      // Google Refresh Check
+      if (token.googleAccessToken && token.googleExpiresAt && nowInSeconds >= token.googleExpiresAt - 60) {
+        if (token.googleRefreshToken) {
+          const refreshedToken = await refreshGoogleAccessToken(token);
+          return refreshedToken;
+        } else {
+          token.googleAccessToken = undefined;
+          token.googleExpiresAt = undefined;
+          token.error = "GoogleNoRefreshTokenError";
+        }
+      }
       
       return token;
     },
@@ -159,8 +139,6 @@ export const authOptions: NextAuthOptions = {
     }
   },
   secret: process.env.NEXTAUTH_SECRET,
-  // adapter: PrismaAdapter(prisma), // Temporarily commented out for testing if adapter is interfering
-  // debug: true, // Enable for more verbose logs from NextAuth itself
 };
 
 const handler = NextAuth(authOptions);
@@ -204,6 +182,47 @@ async function refreshSpotifyAccessToken(token: JWT): Promise<JWT> {
       spotifyAccessToken: undefined,
       spotifyExpiresAt: undefined,
       error: "SpotifyRefreshAccessTokenError",
+    };
+  }
+}
+
+// Helper function for Google token refresh
+async function refreshGoogleAccessToken(token: JWT): Promise<JWT> {
+  try {
+    const url = "https://oauth2.googleapis.com/token";
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({
+        grant_type: "refresh_token",
+        refresh_token: token.googleRefreshToken!,
+        client_id: process.env.GOOGLE_CLIENT_ID!,
+        client_secret: process.env.GOOGLE_CLIENT_SECRET!,
+      }),
+    });
+
+    const refreshedTokens = await response.json();
+
+    if (!response.ok) {
+      throw new Error(`Failed to refresh Google token: ${refreshedTokens.error_description || 'Unknown error'}`);
+    }
+
+    return {
+      ...token,
+      googleAccessToken: refreshedTokens.access_token,
+      googleExpiresAt: Math.floor(Date.now() / 1000 + refreshedTokens.expires_in),
+      googleRefreshToken: refreshedTokens.refresh_token ?? token.googleRefreshToken,
+      error: undefined,
+    };
+  } catch (error) {
+    console.error("[Google Refresh] Error:", error);
+    return {
+      ...token,
+      googleAccessToken: undefined,
+      googleExpiresAt: undefined,
+      error: "GoogleRefreshAccessTokenError",
     };
   }
 }

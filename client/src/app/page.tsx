@@ -1,7 +1,7 @@
 "use client"
 
 import { Check } from "lucide-react"
-import { useSession, signIn, signOut } from "next-auth/react"
+import { useSession } from "next-auth/react"
 import { useEffect, useRef } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 
@@ -197,20 +197,3 @@ export default function Home() {
   )
 }
 
-// Custom longer arrow component
-function LongerArrow({ className }: { className?: string }) {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      viewBox="0 0 40 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
-    >
-      <path d="M5 12h30M35 12l-7-7M35 12l-7 7" />
-    </svg>
-  )
-}

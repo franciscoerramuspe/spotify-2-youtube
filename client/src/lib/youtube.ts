@@ -26,6 +26,36 @@ function getOAuth2Client(accessToken: string): Auth.OAuth2Client {
 }
 
 /**
+ * Test YouTube API quota availability with a simple search
+ * WARNING: This consumes 100 quota units even if just testing!
+ */
+export async function testYouTubeQuota(accessToken: string): Promise<{ available: boolean; error?: string }> {
+  const youtube = google.youtube('v3');
+  const auth = getOAuth2Client(accessToken);
+
+  try {
+    console.log(`[QUOTA] Testing YouTube quota - This will consume 100 units`);
+    // Simple test search with minimal quota usage
+    const response = await youtube.search.list({
+      auth,
+      part: ['id'],
+      q: 'test',
+      type: ['video'],
+      maxResults: 1
+    });
+
+    console.log(`[QUOTA] Test search successful - 100 units consumed`);
+    return { available: true };
+  } catch (error: any) {
+    console.log(`[QUOTA] Test search failed - Still consumed 100 units! Error:`, error?.message);
+    if (error?.status === 403 && error?.message?.includes('quota')) {
+      return { available: false, error: 'YouTube API quota exceeded' };
+    }
+    return { available: false, error: error?.message || 'Unknown YouTube API error' };
+  }
+}
+
+/**
  * Finds a YouTube video matching the search query.
  * Note: This is a basic implementation. More sophisticated matching
  * might involve checking duration or other metadata.
@@ -38,6 +68,7 @@ export async function findYouTubeVideo(
   const auth = getOAuth2Client(accessToken);
 
   try {
+    console.log(`[QUOTA] Searching YouTube for: "${query}" - Will consume 100 units`);
     const response = await youtube.search.list({
       auth,
       part: ['id'],
@@ -46,11 +77,26 @@ export async function findYouTubeVideo(
       maxResults: 1
     });
 
-    return response.data.items?.[0]?.id?.videoId || null;
-  } catch (error) {
+    const videoId = response.data.items?.[0]?.id?.videoId || null;
+    console.log(`[QUOTA] Search completed - 100 units consumed. Result: ${videoId ? 'Found' : 'Not found'}`);
+    return videoId;
+  } catch (error: any) {
+    console.log(`[QUOTA] Search failed for "${query}" - Still consumed 100 units! Error:`, error?.message);
+    
+    // Handle quota exceeded error gracefully
+    if (error?.status === 403 && error?.message?.includes('quota')) {
+      console.warn(`[QUOTA] YouTube quota exceeded for query: "${query}"`);
+      return null; // Return null instead of throwing to continue processing other tracks
+    }
+    
     console.error('YouTube search error:', error);
     throw error;
   }
+}
+
+// Add delay function for rate limiting
+function delay(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 /**

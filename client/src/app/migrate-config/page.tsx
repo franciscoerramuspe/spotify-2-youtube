@@ -17,9 +17,11 @@ function MigrateConfigContent() {
   const searchParams = useSearchParams()
 
   // State
-  const [allPlaylists, setAllPlaylists] = useState<PlaylistMetadata[]>([]) // All user playlists for filtering
+  const [, setAllPlaylists] = useState<PlaylistMetadata[]>([]) // All user playlists for filtering
   const [selectedMetadata, setSelectedMetadata] = useState<PlaylistMetadata[]>([])
   const [targetPlaylistName, setTargetPlaylistName] = useState<string>("")
+  const [trackLimit, setTrackLimit] = useState<number | "">("") // New state for track limit
+  const [limitMode, setLimitMode] = useState<"all" | "latest">("all") // New state for mode selection
   const [isLoadingMetadata, setIsLoadingMetadata] = useState(true)
   const [isMigrating, setIsMigrating] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -81,6 +83,12 @@ function MigrateConfigContent() {
     if (!targetPlaylistName.trim() || selectedMetadata.length === 0 || isMigrating) {
       return
     }
+    
+    // Validate track limit if in "latest" mode
+    if (limitMode === "latest" && (!trackLimit || trackLimit <= 0)) {
+      setError("Please enter a valid number of tracks to migrate.")
+      return
+    }
     setIsMigrating(true)
     setError(null)
     setMigrationStatus("Processing migration, please wait...") // Set a generic status
@@ -96,12 +104,18 @@ function MigrateConfigContent() {
         body: JSON.stringify({
           spotifyPlaylistIds: selectedMetadata.map((p) => p.id),
           targetPlaylistName: targetPlaylistName.trim(),
+          trackLimit: limitMode === "latest" ? trackLimit : undefined,
+          limitMode: limitMode,
         }),
       })
 
       const result = await response.json()
 
       if (!response.ok) {
+        // Handle quota exceeded specifically
+        if (response.status === 429 && result.quotaExceeded) {
+          throw new Error(`${result.error} (${result.quotaExceededTracks} tracks affected)`)
+        }
         throw new Error(result.error || `Migration failed with status: ${response.status}`)
       }
 
@@ -110,9 +124,14 @@ function MigrateConfigContent() {
 
       // Navigate to results page after a short delay to show completion
       setTimeout(() => {
-        router.push(
-          `/migration-results?youtubePlaylistId=${result.youtubePlaylistId}&unmatched=${result.unmatchedTracks?.length || 0}&total=${result.totalTracksProcessed || 0}`,
-        )
+        const params = new URLSearchParams({
+          youtubePlaylistId: result.youtubePlaylistId || '',
+          unmatched: String(result.unmatchedTracks?.length || 0),
+          total: String(result.totalTracksProcessed || 0),
+          quotaExceeded: String(result.quotaExceeded || false),
+          quotaExceededCount: String(result.quotaExceededTracks?.length || 0)
+        });
+        router.push(`/migration-results?${params.toString()}`);
       }, 1000) // Delay for 1 second
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "An unknown error occurred during migration."
@@ -345,6 +364,62 @@ function MigrateConfigContent() {
                   )}
                 </div>
 
+                {/* Track Selection Mode */}
+                <div className="mt-6">
+                  <label className="block text-sm font-medium text-gray-300 mb-3">
+                    Migration Mode
+                  </label>
+                  <div className="space-y-3">
+                    <label className="flex items-center cursor-pointer">
+                      <input
+                        type="radio"
+                        name="limitMode"
+                        value="all"
+                        checked={limitMode === "all"}
+                        onChange={(e) => setLimitMode(e.target.value as "all" | "latest")}
+                        className="mr-3 text-blue-500 focus:ring-blue-500"
+                        disabled={isMigrating}
+                      />
+                      <span className="text-white">Migrate all tracks</span>
+                    </label>
+                    <label className="flex items-center cursor-pointer">
+                      <input
+                        type="radio"
+                        name="limitMode"
+                        value="latest"
+                        checked={limitMode === "latest"}
+                        onChange={(e) => setLimitMode(e.target.value as "all" | "latest")}
+                        className="mr-3 text-blue-500 focus:ring-blue-500"
+                        disabled={isMigrating}
+                      />
+                      <span className="text-white">Migrate latest tracks only</span>
+                    </label>
+                  </div>
+
+                  {/* Track Limit Input - Only show when "latest" is selected */}
+                  {limitMode === "latest" && (
+                    <div className="mt-4">
+                      <label htmlFor="trackLimit" className="block text-sm font-medium text-gray-300 mb-2">
+                        Number of Latest Tracks
+                      </label>
+                      <input
+                        type="number"
+                        id="trackLimit"
+                        value={trackLimit}
+                        onChange={(e) => setTrackLimit(e.target.value ? parseInt(e.target.value) : "")}
+                        placeholder="e.g., 50"
+                        min="1"
+                        max="1000"
+                        className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-300"
+                        disabled={isMigrating}
+                      />
+                      <p className="mt-1 text-xs text-gray-400">
+                        Will migrate the newest {trackLimit || "X"} songs from each playlist
+                      </p>
+                    </div>
+                  )}
+                </div>
+
                 <div className="mt-6 bg-white/5 rounded-xl p-4 border border-white/10">
                   <h3 className="text-sm font-medium text-gray-300 mb-2">Migration Summary</h3>
                   <div className="space-y-2 text-sm">
@@ -355,13 +430,26 @@ function MigrateConfigContent() {
                     <div className="flex justify-between">
                       <span className="text-gray-400">Total Tracks:</span>
                       <span className="font-medium">
-                        {selectedMetadata.reduce((sum, playlist) => sum + playlist.trackCount, 0)}
+                        {limitMode === "all" 
+                          ? selectedMetadata.reduce((sum, playlist) => sum + playlist.trackCount, 0)
+                          : limitMode === "latest" && trackLimit 
+                            ? Math.min(trackLimit * selectedMetadata.length, selectedMetadata.reduce((sum, playlist) => sum + playlist.trackCount, 0))
+                            : selectedMetadata.reduce((sum, playlist) => sum + playlist.trackCount, 0)
+                        }
+                        {limitMode === "latest" && trackLimit && (
+                          <span className="text-blue-400 ml-1">(latest {trackLimit} per playlist)</span>
+                        )}
                       </span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-gray-400">Estimated Time:</span>
                       <span className="font-medium">
-                        ~{Math.ceil(selectedMetadata.reduce((sum, p) => sum + p.trackCount, 0) / 10)} min
+                        ~{Math.ceil((limitMode === "all" 
+                          ? selectedMetadata.reduce((sum, p) => sum + p.trackCount, 0)
+                          : limitMode === "latest" && trackLimit 
+                            ? Math.min(trackLimit * selectedMetadata.length, selectedMetadata.reduce((sum, playlist) => sum + playlist.trackCount, 0))
+                            : selectedMetadata.reduce((sum, p) => sum + p.trackCount, 0)
+                        ) / 10)} min
                       </span>
                     </div>
                   </div>
@@ -371,11 +459,19 @@ function MigrateConfigContent() {
               <div className="mt-8">
                 <button
                   onClick={handleMigrate}
-                  disabled={!targetPlaylistName.trim() || selectedMetadata.length === 0 || isMigrating} // Disable button during migration
+                  disabled={
+                    !targetPlaylistName.trim() || 
+                    selectedMetadata.length === 0 || 
+                    isMigrating ||
+                    (limitMode === "latest" && (!trackLimit || trackLimit <= 0))
+                  }
                   className={`w-full py-4 px-6 rounded-xl font-semibold text-lg transition-all duration-300 flex items-center justify-center
                   ${
-                    !targetPlaylistName.trim() || selectedMetadata.length === 0 || isMigrating
-                      ? "bg-white/10 text-gray-400 cursor-not-allowed" // Keep disabled style if migrating
+                    !targetPlaylistName.trim() || 
+                    selectedMetadata.length === 0 || 
+                    isMigrating ||
+                    (limitMode === "latest" && (!trackLimit || trackLimit <= 0))
+                      ? "bg-white/10 text-gray-400 cursor-not-allowed"
                       : "bg-gradient-to-r from-[#1DB954] to-red-500 hover:from-[#1ED760] hover:to-red-400 text-white shadow-lg hover:shadow-[#1DB954]/20 transform hover:-translate-y-1"
                   }`}
                 >

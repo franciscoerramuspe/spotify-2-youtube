@@ -22,13 +22,20 @@ interface SpotifyPlaylistTracksResponse {
 
 export async function fetchSpotifyTracks(
   accessToken: string,
-  playlistId: string
+  playlistId: string,
+  options?: {
+    limit?: number; // Max number of tracks to fetch
+    latestFirst?: boolean; // Whether to get newest tracks first
+  }
 ): Promise<TrackInfo[]> {
   const tracks: TrackInfo[] = [];
-  let url: string | null = `https://api.spotify.com/v1/playlists/${playlistId}/tracks?fields=items(track(name,duration_ms,artists(name))),next&limit=50`; // Added fields query param for efficiency
+  let url: string | null = `https://api.spotify.com/v1/playlists/${playlistId}/tracks?fields=items(track(name,duration_ms,artists(name))),next&limit=50`;
   const headers = { Authorization: `Bearer ${accessToken}` };
 
-  console.log(`Fetching tracks for playlist: ${playlistId}`);
+  console.log(`Fetching tracks for playlist: ${playlistId} ${options?.limit ? `(limit: ${options.limit})` : '(all tracks)'} ${options?.latestFirst ? '(newest first)' : ''}`);
+  
+  // If we need latest first with a limit, we might need to fetch more strategically
+  // For now, let's fetch all and then process
   while (url) {
     try {
       const res = await fetch(url, { headers });
@@ -52,15 +59,34 @@ export async function fetchSpotifyTracks(
             console.log(`  - Skipping track item due to missing data: ${JSON.stringify(item)}`);
         }
       }
-      url = data.next; // Spotify gives you the next-page URL or null
+      
+      // If we have a limit and we're getting latest first, we might be able to optimize
+      // But for now, let's fetch all and process at the end
+      url = data.next;
       if (url) {
         console.log(`  - Fetching next page: ${url}`);
       }
     } catch (error) {
       console.error("Error during Spotify track fetch loop:", error);
-      throw error; // Re-throw after logging
+      throw error;
     }
   }
-  console.log(`Finished fetching tracks for playlist ${playlistId}. Total: ${tracks.length}`);
-  return tracks;
+
+  // Process the tracks based on options
+  let processedTracks = tracks;
+  
+  // If latestFirst is true, reverse the array (Spotify returns oldest first by default)
+  if (options?.latestFirst) {
+    processedTracks = [...tracks].reverse();
+    console.log(`  - Reversed track order (newest first)`);
+  }
+  
+  // If limit is specified, take only the first N tracks
+  if (options?.limit && options.limit > 0) {
+    processedTracks = processedTracks.slice(0, options.limit);
+    console.log(`  - Limited to ${options.limit} tracks`);
+  }
+
+  console.log(`Finished fetching tracks for playlist ${playlistId}. Total fetched: ${tracks.length}, Final result: ${processedTracks.length}`);
+  return processedTracks;
 } 

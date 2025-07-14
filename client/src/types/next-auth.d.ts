@@ -6,34 +6,38 @@ declare module "next-auth" {
   /**
    * Returned by `useSession`, `getSession` and received as a prop on the `SessionProvider` React Context
    */
-  interface Session {
-    user: {
-      /** The user's id. */
-      id?: string;
-      /** The user's spotify connection status. */
-      spotifyConnected?: boolean;
-      /** The user's youtube connection status. */
-      youtubeConnected?: boolean;
-    } & DefaultSession["user"];
-    accessToken?: string; // If you store access tokens directly on session
+  interface Session extends DefaultSession {
+    userId?: string;
+    spotifyAccessToken?: string;
+    googleAccessToken?: string;
     error?: string;
+    user: {
+      id: string;
+      /** True if a Spotify token is present */
+      spotifyToken: boolean;
+      /** True if a Google/YouTube token is present */
+      googleToken: boolean;
+    } & DefaultSession["user"];
   }
 
   interface User extends DefaultUser {
-    spotifyConnected?: boolean;
-    youtubeConnected?: boolean;
+    spotifyToken?: boolean;
+    googleToken?: boolean;
   }
 }
 
 declare module "next-auth/jwt" {
   /** Returned by the `jwt` callback and `getToken`, when using JWT sessions */
   interface JWT {
-    /** OpenID ID Token */
-    idToken?: string;
-    accessToken?: string;
-    refreshToken?: string;
-    accessTokenExpires?: number;
+    userId?: string;
+    spotifyAccessToken?: string;
+    spotifyTokenExpires?: number;
+    googleAccessToken?: string;
+    googleTokenExpires?: number;
+    spotifyRefreshToken?: string;
+    spotifyExpiresAt?: number;
+    googleRefreshToken?: string;
+    googleExpiresAt?: number;
     error?: string;
-    user?: Session["user"]; // Include the augmented user type
   }
 }
