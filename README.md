@@ -17,9 +17,10 @@ A Next.js application that allows you to migrate your Spotify playlists to YouTu
 ### Prerequisites
 
 - Node.js 18+ and npm
+- Docker and Docker Compose (for local database)
 - Spotify Developer Account
 - Google Cloud Platform Account (for YouTube Data API)
-- PostgreSQL database (Supabase recommended)
+- PostgreSQL database (Docker Compose setup provided, or Supabase recommended for cloud)
 
 ### 1. Clone the Repository
 
@@ -45,6 +46,21 @@ cp env.example .env.local
 Fill in the required environment variables (see [Environment Setup](#environment-setup) below).
 
 ### 4. Set Up Database
+
+#### Option A: Using Docker Compose (Recommended for Local Development)
+
+```bash
+# Start PostgreSQL database with Docker Compose
+docker-compose up -d postgres
+
+# Wait for database to be ready, then generate Prisma client
+npx prisma generate
+
+# Run database migrations
+npx prisma db push
+```
+
+#### Option B: Using External Database (Supabase/Other)
 
 ```bash
 # Generate Prisma client
@@ -102,7 +118,20 @@ DATABASE_URL=your_postgresql_database_url
    - Authorized redirect URI: `http://localhost:3000/api/auth/callback/google`
 5. Copy Client ID and Client Secret to your `.env.local`
 
-### Database Setup (Supabase)
+### Database Setup
+
+#### Option A: Docker Compose (Local Development)
+
+1. Make sure Docker and Docker Compose are installed
+2. Run `docker-compose up -d postgres` from the project root
+3. The database will be available at `localhost:5432`
+4. Use the default connection string in `.env.local`:
+   ```
+   DATABASE_URL=postgresql://admin%40example.com:admin@localhost:5432/spotify_youtube_db
+   ```
+5. Run `cd client && npx prisma db push` to create tables
+
+#### Option B: Supabase (Cloud Database)
 
 1. Create account at [Supabase](https://supabase.com)
 2. Create a new project
@@ -115,7 +144,7 @@ DATABASE_URL=your_postgresql_database_url
 ```
 client/
 ├── src/
-│   ├── app/                    # Next.js 13+ App Router
+│   ├── app/                   # Next.js 13+ App Router
 │   │   ├── api/               # API routes
 │   │   │   ├── auth/          # NextAuth configuration
 │   │   │   ├── migrate/       # Migration endpoint
@@ -166,6 +195,22 @@ client/
 
 ## 🔧 Development
 
+### Docker Commands
+
+```bash
+# Start database service
+docker-compose up -d
+
+# Stop database service
+docker-compose down
+
+# View logs
+docker-compose logs postgres
+
+# Restart database
+docker-compose restart postgres
+```
+
 ### Scripts
 
 ```bash
@@ -178,7 +223,7 @@ npm run lint         # Run ESLint
 ### Database Management
 
 ```bash
-npx prisma studio              # Open Prisma Studio (database GUI)
+npx prisma studio             # Open Prisma Studio (database GUI)
 npx prisma generate           # Regenerate Prisma client
 npx prisma db push            # Push schema changes to database
 npx prisma migrate dev        # Create and apply migration
