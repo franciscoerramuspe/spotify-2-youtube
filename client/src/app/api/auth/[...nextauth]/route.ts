@@ -4,7 +4,21 @@ import { PrismaClient } from "@prisma/client";
 import SpotifyProvider from "next-auth/providers/spotify";
 import GoogleProvider from "next-auth/providers/google";
 import { JWT } from "next-auth/jwt";
-
+import {
+  PROVIDERS,
+  OAUTH_SCOPES,
+  API_URLS,
+  SESSION_STRATEGY,
+  TOKEN_REFRESH_BUFFER_SECONDS,
+  SESSION_DURATION,
+  GRANT_TYPES,
+  HTTP_METHODS,
+  HTTP_HEADERS,
+  CONTENT_TYPES,
+  AUTH_ERRORS,
+  LOG_PREFIXES,
+  TOKEN_FIELD_NAMES,
+} from "@/lib/constants";
 
 // Initialize Prisma Client
 const prisma = new PrismaClient();
@@ -18,7 +32,7 @@ export const authOptions: NextAuthOptions = {
       clientSecret: process.env.SPOTIFY_CLIENT_SECRET!,
       authorization: {
         params: {
-          scope: "playlist-read-private playlist-read-collaborative",
+          scope: OAUTH_SCOPES.SPOTIFY,
         },
       },
     }),
@@ -27,15 +41,15 @@ export const authOptions: NextAuthOptions = {
       clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
       authorization: {
         params: {
-          scope: "openid email profile https://www.googleapis.com/auth/youtube",
+          scope: OAUTH_SCOPES.GOOGLE,
         },
       },
     }),
   ],
 
   session: {
-    strategy: "jwt",
-    maxAge: 30 * 24 * 60 * 60, // 30 days
+    strategy: SESSION_STRATEGY,
+    maxAge: SESSION_DURATION.THIRTY_DAYS,
   },
 
   callbacks: {
@@ -56,7 +70,7 @@ export const authOptions: NextAuthOptions = {
             select: { provider: true, access_token: true, refresh_token: true, expires_at: true }
           });
         } catch (error) {
-          console.error("[JWT Account] Error loading existing accounts:", error);
+          console.error(`${LOG_PREFIXES.JWT_ACCOUNT} Error loading existing accounts:`, error);
         }
 
         // Start with the base token and add tokens from all linked accounts
@@ -67,11 +81,11 @@ export const authOptions: NextAuthOptions = {
         }; 
 
         // Add the new account's tokens
-        if (account.provider === "spotify") {
+        if (account.provider === PROVIDERS.SPOTIFY) {
           newToken.spotifyAccessToken = account.access_token;
           newToken.spotifyRefreshToken = account.refresh_token;
           newToken.spotifyExpiresAt = account.expires_at;
-        } else if (account.provider === "google") {
+        } else if (account.provider === PROVIDERS.GOOGLE) {
           newToken.googleAccessToken = account.access_token;
           newToken.googleRefreshToken = account.refresh_token;
           newToken.googleExpiresAt = account.expires_at;
@@ -79,11 +93,11 @@ export const authOptions: NextAuthOptions = {
 
         // Add tokens from existing linked accounts (to preserve other providers)
         for (const existingAccount of existingAccounts) {
-          if (existingAccount.provider === "spotify" && existingAccount.provider !== account.provider) {
+          if (existingAccount.provider === PROVIDERS.SPOTIFY && existingAccount.provider !== account.provider) {
             newToken.spotifyAccessToken = existingAccount.access_token || undefined;
             newToken.spotifyRefreshToken = existingAccount.refresh_token || undefined;
             newToken.spotifyExpiresAt = existingAccount.expires_at || undefined;
-          } else if (existingAccount.provider === "google" && existingAccount.provider !== account.provider) {
+          } else if (existingAccount.provider === PROVIDERS.GOOGLE && existingAccount.provider !== account.provider) {
             newToken.googleAccessToken = existingAccount.access_token || undefined;
             newToken.googleRefreshToken = existingAccount.refresh_token || undefined;
             newToken.googleExpiresAt = existingAccount.expires_at || undefined;
@@ -97,26 +111,26 @@ export const authOptions: NextAuthOptions = {
       const nowInSeconds = Date.now() / 1000;
 
       // Spotify Refresh Check
-      if (token.spotifyAccessToken && token.spotifyExpiresAt && nowInSeconds >= token.spotifyExpiresAt - 60) {
+      if (token.spotifyAccessToken && token.spotifyExpiresAt && nowInSeconds >= token.spotifyExpiresAt - TOKEN_REFRESH_BUFFER_SECONDS) {
         if (token.spotifyRefreshToken) {
           const refreshedToken = await refreshSpotifyAccessToken(token);
           return refreshedToken;
         } else {
           token.spotifyAccessToken = undefined;
           token.spotifyExpiresAt = undefined;
-          token.error = "SpotifyNoRefreshTokenError";
+          token.error = AUTH_ERRORS.SPOTIFY_NO_REFRESH_TOKEN;
         }
       }
 
       // Google Refresh Check
-      if (token.googleAccessToken && token.googleExpiresAt && nowInSeconds >= token.googleExpiresAt - 60) {
+      if (token.googleAccessToken && token.googleExpiresAt && nowInSeconds >= token.googleExpiresAt - TOKEN_REFRESH_BUFFER_SECONDS) {
         if (token.googleRefreshToken) {
           const refreshedToken = await refreshGoogleAccessToken(token);
           return refreshedToken;
         } else {
           token.googleAccessToken = undefined;
           token.googleExpiresAt = undefined;
-          token.error = "GoogleNoRefreshTokenError";
+          token.error = AUTH_ERRORS.GOOGLE_NO_REFRESH_TOKEN;
         }
       }
       
@@ -147,17 +161,16 @@ export { handler as GET, handler as POST };
 // Helper function for Spotify token refresh
 async function refreshSpotifyAccessToken(token: JWT): Promise<JWT> {
   try {
-    const url = "https://accounts.spotify.com/api/token";
-    const response = await fetch(url, {
-      method: "POST",
+    const response = await fetch(API_URLS.SPOTIFY_TOKEN, {
+      method: HTTP_METHODS.POST,
       headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
+        [HTTP_HEADERS.CONTENT_TYPE]: CONTENT_TYPES.FORM_URLENCODED,
         Authorization: `Basic ${Buffer.from(
           `${process.env.SPOTIFY_CLIENT_ID}:${process.env.SPOTIFY_CLIENT_SECRET}`
         ).toString("base64")}`,
       },
       body: new URLSearchParams({
-        grant_type: "refresh_token",
+        grant_type: GRANT_TYPES.REFRESH_TOKEN,
         refresh_token: token.spotifyRefreshToken!,
       }),
     });
@@ -170,18 +183,18 @@ async function refreshSpotifyAccessToken(token: JWT): Promise<JWT> {
 
     return {
       ...token,
-      spotifyAccessToken: refreshedTokens.access_token,
-      spotifyExpiresAt: Math.floor(Date.now() / 1000 + refreshedTokens.expires_in),
-      spotifyRefreshToken: refreshedTokens.refresh_token ?? token.spotifyRefreshToken,
+      [TOKEN_FIELD_NAMES.SPOTIFY.ACCESS_TOKEN]: refreshedTokens.access_token,
+      [TOKEN_FIELD_NAMES.SPOTIFY.EXPIRES_AT]: Math.floor(Date.now() / 1000 + refreshedTokens.expires_in),
+      [TOKEN_FIELD_NAMES.SPOTIFY.REFRESH_TOKEN]: refreshedTokens.refresh_token ?? token.spotifyRefreshToken,
       error: undefined,
     };
   } catch (error) {
-    console.error("[Spotify Refresh] Error:", error);
+    console.error(`${LOG_PREFIXES.SPOTIFY_REFRESH} Error:`, error);
     return {
       ...token,
-      spotifyAccessToken: undefined,
-      spotifyExpiresAt: undefined,
-      error: "SpotifyRefreshAccessTokenError",
+      [TOKEN_FIELD_NAMES.SPOTIFY.ACCESS_TOKEN]: undefined,
+      [TOKEN_FIELD_NAMES.SPOTIFY.EXPIRES_AT]: undefined,
+      error: AUTH_ERRORS.SPOTIFY_REFRESH_ACCESS_TOKEN,
     };
   }
 }
@@ -189,14 +202,13 @@ async function refreshSpotifyAccessToken(token: JWT): Promise<JWT> {
 // Helper function for Google token refresh
 async function refreshGoogleAccessToken(token: JWT): Promise<JWT> {
   try {
-    const url = "https://oauth2.googleapis.com/token";
-    const response = await fetch(url, {
-      method: "POST",
+    const response = await fetch(API_URLS.GOOGLE_TOKEN, {
+      method: HTTP_METHODS.POST,
       headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
+        [HTTP_HEADERS.CONTENT_TYPE]: CONTENT_TYPES.FORM_URLENCODED,
       },
       body: new URLSearchParams({
-        grant_type: "refresh_token",
+        grant_type: GRANT_TYPES.REFRESH_TOKEN,
         refresh_token: token.googleRefreshToken!,
         client_id: process.env.GOOGLE_CLIENT_ID!,
         client_secret: process.env.GOOGLE_CLIENT_SECRET!,
@@ -211,18 +223,18 @@ async function refreshGoogleAccessToken(token: JWT): Promise<JWT> {
 
     return {
       ...token,
-      googleAccessToken: refreshedTokens.access_token,
-      googleExpiresAt: Math.floor(Date.now() / 1000 + refreshedTokens.expires_in),
-      googleRefreshToken: refreshedTokens.refresh_token ?? token.googleRefreshToken,
+      [TOKEN_FIELD_NAMES.GOOGLE.ACCESS_TOKEN]: refreshedTokens.access_token,
+      [TOKEN_FIELD_NAMES.GOOGLE.EXPIRES_AT]: Math.floor(Date.now() / 1000 + refreshedTokens.expires_in),
+      [TOKEN_FIELD_NAMES.GOOGLE.REFRESH_TOKEN]: refreshedTokens.refresh_token ?? token.googleRefreshToken,
       error: undefined,
     };
   } catch (error) {
-    console.error("[Google Refresh] Error:", error);
+    console.error(`${LOG_PREFIXES.GOOGLE_REFRESH} Error:`, error);
     return {
       ...token,
-      googleAccessToken: undefined,
-      googleExpiresAt: undefined,
-      error: "GoogleRefreshAccessTokenError",
+      [TOKEN_FIELD_NAMES.GOOGLE.ACCESS_TOKEN]: undefined,
+      [TOKEN_FIELD_NAMES.GOOGLE.EXPIRES_AT]: undefined,
+      error: AUTH_ERRORS.GOOGLE_REFRESH_ACCESS_TOKEN,
     };
   }
 }

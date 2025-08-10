@@ -82,6 +82,13 @@ export async function findYouTubeVideo(
     return videoId;
   } catch (error: any) {
     console.log(`[QUOTA] Search failed for "${query}" - Still consumed 100 units! Error:`, error?.message);
+    console.error('[DEBUG] Full error details:', {
+      status: error?.status,
+      code: error?.code,
+      message: error?.message,
+      errors: error?.errors,
+      details: error?.details
+    });
     
     // Handle quota exceeded error gracefully
     if (error?.status === 403 && error?.message?.includes('quota')) {
